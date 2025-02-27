@@ -1,77 +1,58 @@
+
 from asnake.client import ASnakeClient
-import argparse
-import sys
-from typing import Optional
 
+# returns a list of ao refs for a resource
+def get_ao_refs(client: ASnakeClient, repo_id: int, resource_id: int) -> list[str]:
+    """returns a list of ao refs for a resource"""
+    endpoint = f"/repositories/{repo_id}/resources/{resource_id}/ordered_records"
+    response = client.get(endpoint).json()
+    ao_refs = [ao["ref"] for ao in response.get("uris", [])]
+    return ao_refs
 
-def fix_box_folders(client: ASnakeClient, repo_id: int) -> None:
-    """
-   find top-level containers with "box-folder" type and fix them.
-    
-    Args:
-        client (ASnakeClient): Initialized ArchivesSpace client
-        repo_id (int): Repository ID in ArchivesSpace
-    """
-    
-    # api endpoint for top-level containers
-    endpoint = f'/repositories/{repo_id}/top_containers'
-    params = {
-        'page': 1,
-        'page_size': 1000,
-    }
-    
-    # loop through all pages of top-level containers
-    while True:
-        response = client.get(endpoint, params=params).json()
-        box_folders = [c for c in response['results'] if c['type'] == 'box-folder']
-        for box_folder in box_folders:
-            print(f"box-folder: {box_folder['uri']}")
-
-            # what are the linked resources to update?
-
-            series_refs = [series['ref'] for series in box_folder.get('series', [])]
-            for series_ref in series_refs:
-                print(f"-- series: {series_ref}")
-            
-            collection_refs = [collection['ref'] for collection in box_folder.get('collection', [])]
-            for collection_ref in collection_refs:
-                print(f"-- collection: {collection_ref}")
-                
-
+# Modify instances by adding a Folder child container and fixing top container references.  
+def fix_ao_instances(client: ASnakeClient, ao_ref: str):
+    """Modify instances by adding a Folder child container and fixing top container references."""
+    ao = client.get(ao_ref).json()
+    for instance in ao.get("instances", []):
+        if "sub_container" not in instance:
+            return # ignore this instance
+        if "top_container" not in instance["sub_container"]:
+            return # ignore this instance
+        tc_ref = instance["sub_container"]["top_container"]["ref"]
+        top_container = client.get(tc_ref).json()
+        # Check for improperly formatted top containers
+        if top_container.get("type") not in ["box-folder", "Box-folder"]:
+            return # ignore this instance
+        indicator = top_container.get("indicator", "").strip()
+        if ":" not in indicator:
+            return # ignore this instance
         
-        # Check if there are more pages
-        if response['this_page'] == response['last_page']:
-            break
-        else:
-            params['page'] += 1
-    
-
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description='Fix box and folder numbers in ArchivesSpace records'
-    )
-    parser.add_argument(
-        '--repo-id',
-        type=int,
-        required=True,
-        help='Repository ID in ArchivesSpace'
-    )
-    return parser.parse_args()
-
-def main() -> Optional[int]:
-    """Main entry point for the script."""
-    try:
-        args = parse_args()
-        # Initialize client and logging here
-        client = ASnakeClient()
-        # logging.setup_logging(level='DEBUG')
+        box_num, folder_num = indicator.split(":", 1)
+        box_num, folder_num = box_num.strip(), folder_num.strip()
+        # Set the child container correctly
         
-        fix_box_folders(client, args.repo_id)
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        old_child_type = instance["sub_container"].get("child_type", "[None]")
+        old_child_indicator = instance["sub_container"].get("child_indicator", "[None]")
+        
+        new_child_type = "Folder"
+        new_child_indicator = folder_num
+        # instance["sub_container"]["child_type"] = "Folder"
+        # instance["sub_container"]["child_indicator"] = folder_num
 
-if __name__ == '__main__':
-    sys.exit(main()) 
+        print(f"AO {ao_ref} changes:")
+        print(f"-- child_type: '{old_child_type}' -> '{new_child_type}'")
+        print(f"-- child_indicator: '{old_child_indicator}' -> '{new_child_indicator}'")
+
+        print(f"-- top_container: {tc_ref}:")
+        print(f"--- type: '{top_container.get('type')}' -> 'Box'")
+        print(f"--- indicator: '{top_container.get('indicator')}' -> '{box_num}'")
+
+
+if __name__ == "__main__":
+    repo_id = 2
+    resource_id = 4397
+    batch_size = 5000
+    client = ASnakeClient()
+    ao_refs = get_ao_refs(client, repo_id, resource_id)
+    for ao_ref in ao_refs:
+       fix_ao_instances(client, ao_ref)
