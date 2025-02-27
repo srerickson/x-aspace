@@ -1,5 +1,5 @@
-
 from asnake.client import ASnakeClient
+import argparse
 
 # returns a list of ao refs for a resource
 def get_ao_refs(client: ASnakeClient, repo_id: int, resource_id: int) -> list[str]:
@@ -18,18 +18,20 @@ def fix_ao_instances(client: ASnakeClient, ao_ref: str):
             return # ignore this instance
         if "top_container" not in instance["sub_container"]:
             return # ignore this instance
+        
         tc_ref = instance["sub_container"]["top_container"]["ref"]
         top_container = client.get(tc_ref).json()
-        # Check for improperly formatted top containers
+        
+        # check for improperly formatted top containers
         if top_container.get("type") not in ["box-folder", "Box-folder"]:
             return # ignore this instance
+        
         indicator = top_container.get("indicator", "").strip()
         if ":" not in indicator:
             return # ignore this instance
         
         box_num, folder_num = indicator.split(":", 1)
         box_num, folder_num = box_num.strip(), folder_num.strip()
-        # Set the child container correctly
         
         old_child_type = instance["sub_container"].get("child_type", "[None]")
         old_child_indicator = instance["sub_container"].get("child_indicator", "[None]")
@@ -49,10 +51,14 @@ def fix_ao_instances(client: ASnakeClient, ao_ref: str):
 
 
 if __name__ == "__main__":
-    repo_id = 2
-    resource_id = 4397
-    batch_size = 5000
+    parser = argparse.ArgumentParser(description='fix "box-folder" top containers in ArchivesSpace')
+    parser.add_argument('--repo-id', type=int, required=True,
+                        help='Repository ID')
+    parser.add_argument('--resource-id', type=int, required=True,
+                        help='Resource ID')
+    args = parser.parse_args()
+    
     client = ASnakeClient()
-    ao_refs = get_ao_refs(client, repo_id, resource_id)
+    ao_refs = get_ao_refs(client, args.repo_id, args.resource_id)
     for ao_ref in ao_refs:
-       fix_ao_instances(client, ao_ref)
+        fix_ao_instances(client, ao_ref)
